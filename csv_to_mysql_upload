@@ -1,0 +1,92 @@
+import pandas as pd 
+import mysql.connector
+import matplotlib.pyplot as plt
+import seaborn as sn
+import os
+
+# List of CSV files and corresponding table names
+csv_files = [
+    ('customers.csv', 'customers'),
+    ('orders.csv', 'orders'),
+    ('geolocation.csv', 'geolocation'),
+    ('order_items.csv', 'order_items'),
+    ('products.csv', 'products'),
+    ('payments.csv', 'payments'),
+    ('sellers.csv', 'sellers')
+]
+
+# Connect to MySQL database
+conn = mysql.connector.connect(
+    host='your_host',
+    user='your_username',
+    password='your_password',
+    database='your_database'
+)
+cur = conn.cursor()
+print('Connected to MySQL')
+
+# Folder path containing CSV files
+folder_path = 'path_to_your_folder'
+
+# Function to create table dynamically based on CSV structure
+def create_table_from_csv(csv_file, table_name):
+    file_path = os.path.join(folder_path, csv_file)
+
+    # Read CSV file
+    try:
+        df = pd.read_csv(file_path, encoding='latin1', keep_default_na=True)  # Keep NaN values
+    except Exception as e:
+        print(f"Error reading {csv_file}: {e}")
+        return
+
+    # Ensure column names are valid SQL identifiers
+    df.columns = [col.replace(' ', '_').replace('-', '_') for col in df.columns]
+
+    # Generate column definitions
+    column_types = []
+    for col in df.columns:
+        if df[col].dtype == 'int64':
+            dtype = "INT"
+        elif df[col].dtype == 'float64':
+            dtype = "FLOAT"
+        else:
+            dtype = "VARCHAR(255)"  # VARCHAR(255) for better performance
+        column_types.append(f"`{col}` {dtype} NULL")  # Allow NULL values
+
+    columns_definition = ', '.join(column_types)
+    create_query = f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_definition});"
+    
+    try:
+        cur.execute(create_query)
+        print(f"Table `{table_name}` created successfully.")
+    except Exception as e:
+        print(f"Error creating table `{table_name}`: {e}")
+        return
+
+    # Prepare Insert Query
+    values_placeholder = ', '.join(['%s'] * len(df.columns))
+    insert_query = f"INSERT INTO {table_name} VALUES ({values_placeholder})"
+
+    # Keep NaN as NULL for SQL
+    data = [tuple(None if pd.isna(value) else value for value in row) for row in df.itertuples(index=False, name=None)]
+    
+    if data:
+        try:
+            batch_size = 500  # Insert data in batches
+            for i in range(0, len(data), batch_size):
+                cur.executemany(insert_query, data[i:i + batch_size])
+                conn.commit()
+            print(f"Data inserted into `{table_name}` successfully.")
+        except Exception as e:
+            print(f"Error inserting data into `{table_name}`: {e}")
+    else:
+        print(f"Table `{table_name}` created but no data found in CSV.")
+
+# Process each CSV file
+for csv_file, table_name in csv_files:
+    create_table_from_csv(csv_file, table_name)
+
+# Close the connection
+cur.close()
+conn.close()
+print('All tables created and data inserted successfully.')
